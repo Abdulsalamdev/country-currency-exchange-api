@@ -1,0 +1,17 @@
+{
+  "name": "country-currency-exchange-api",
+  "version": "1.0.0",
+  "description": "Country Currency & Exchange API - plain Node.js + Express + MySQL (no ORM) ready for Railway",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "axios": "^1.5.0",
+    "canvas": "^2.11.0",
+    "dotenv": "^16.1.4",
+    "express": "^4.18.2",
+    "mysql2": "^3.3.0"
+  }
+}
