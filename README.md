@@ -1,32 +1,26 @@
-# Country Currency & Exchange API (Railway-ready)
+# Country Currency & Exchange API (Option B — No image)
 
-This is a deploy-ready **Node.js + Express** project (no ORM) that implements the HNG task:
-- Fetches countries from restcountries
-- Fetches exchange rates from open.er-api
-- Caches countries in MySQL (Railway)
-- Computes `estimated_gdp = population * random(1000-2000) / exchange_rate`
-- Generates a summary image `cache/summary.png` on refresh
-
-## How to deploy on Railway
-1. Push this repository to GitHub.
-2. Create a new Railway project and deploy from GitHub.
-3. Add the **MySQL** plugin on Railway. Railway will expose these env vars:
-   - MYSQL_HOST
-   - MYSQL_PORT
-   - MYSQL_USER
-   - MYSQL_PASSWORD
-   - MYSQL_DATABASE
-4. In Railway project variables add `PORT=5000` (or desired port).
-5. Deploy. Railway will install dependencies and run `npm start`.
+Deploy-ready Node.js + Express API that implements the HNG backend task except image generation (disabled).
+Designed for deployment on Railway with MySQL.
 
 ## Endpoints
-- `POST /countries/refresh` — fetch countries and exchange rates and cache them.
-- `GET /countries` — list countries (filters: `?region=`, `?currency=`, `?sort=gdp_desc`).
-- `GET /countries/:name` — get country by name (case-insensitive).
-- `DELETE /countries/:name` — delete country by name.
-- `GET /status` — return `{ total_countries, last_refreshed_at }`.
-- `GET /countries/image` — serve cached `cache/summary.png`.
+- POST /countries/refresh
+- GET /countries
+- GET /countries?region=Africa&currency=NGN&sort=gdp_desc
+- GET /countries/:name
+- DELETE /countries/:name
+- GET /status
+- GET /countries/image  -> returns {"error":"Summary image generation disabled"}
+
+## Deploy on Railway
+1. Push this repo to GitHub.
+2. Create a new Railway project → Deploy from GitHub.
+3. Add MySQL plugin to the Railway project.
+4. Railway will inject:
+   MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE
+5. Add a project variable: PORT=5000
+6. Deploy — Railway will run `npm install` and `npm start`.
 
 ## Notes
-- No `.env` is required on Railway; variables are injected by Railway.
-- This project uses native `canvas`. Railway builds with Debian and should install native deps during build. A Dockerfile is not required but you can add one if needed.
+- Node version: 20.x
+- No native dependencies; canvas/summary image generation is disabled to ensure smooth Railway builds.

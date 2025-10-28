@@ -1,6 +1,5 @@
 import axios from 'axios';
-import db from '../db.js';
-import { generateSummaryImage } from '../utils/imageGenerator.js';
+import db from '../config/database.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -13,8 +12,8 @@ function validationError(details) {
   return { status: 400, body: { error: 'Validation failed', details } };
 }
 
+// POST /countries/refresh
 export async function refreshHandler(req, res) {
-  // Fetch external APIs first
   let countriesData, exchangeData;
   try {
     const [cResp, eResp] = await Promise.all([
@@ -68,13 +67,11 @@ export async function refreshHandler(req, res) {
       }
 
       if (!name || !population) {
-        // skip invalid external record
         continue;
       }
 
       const name_lc = name.toLowerCase();
 
-      // Upsert: insert or update based on unique name_lc
       const sql = `
         INSERT INTO countries
         (name, name_lc, capital, region, population, currency_code, exchange_rate, estimated_gdp, flag_url, last_refreshed_at)
@@ -95,7 +92,7 @@ export async function refreshHandler(req, res) {
 
     await conn.commit();
 
-    // generate summary image
+    // compute summary info
     const [rows] = await conn.query('SELECT COUNT(*) as total FROM countries');
     const total = rows[0]?.total || 0;
     const [top5rows] = await conn.query('SELECT name, estimated_gdp FROM countries ORDER BY estimated_gdp DESC LIMIT 5');
@@ -106,10 +103,7 @@ export async function refreshHandler(req, res) {
       last_refreshed_at: new Date().toISOString()
     };
 
-    const cacheDir = process.env.CACHE_DIR || 'cache';
-    const outPath = path.join(cacheDir, 'summary.png');
-    await generateSummaryImage(summary, outPath);
-
+    // NO IMAGE: we intentionally skip image generation for Option B
     return res.json({ ok: true, total_countries: total, last_refreshed_at: summary.last_refreshed_at });
   } catch (err) {
     console.error('Refresh failed', err);
@@ -120,6 +114,7 @@ export async function refreshHandler(req, res) {
   }
 }
 
+// GET /countries
 export async function listHandler(req, res) {
   try {
     const { region, currency, sort } = req.query;
@@ -141,11 +136,12 @@ export async function listHandler(req, res) {
   }
 }
 
+// GET /countries/:name
 export async function getOneHandler(req, res) {
   try {
     const name = req.params.name;
     const name_lc = name.toLowerCase();
-    const [rows] = await db.query('SELECT * FROM countries WHERE name_lc = ? LIMIT 1', [name_lc]);
+    const [rows] = await db.query('SELECT id, name, capital, region, population, currency_code, exchange_rate, estimated_gdp, flag_url, last_refreshed_at FROM countries WHERE name_lc = ? LIMIT 1', [name_lc]);
     if (!rows.length) return res.status(404).json({ error: 'Country not found' });
     return res.json(rows[0]);
   } catch (err) {
@@ -154,6 +150,7 @@ export async function getOneHandler(req, res) {
   }
 }
 
+// DELETE /countries/:name
 export async function deleteHandler(req, res) {
   try {
     const name = req.params.name;
@@ -167,6 +164,7 @@ export async function deleteHandler(req, res) {
   }
 }
 
+// GET /status
 export async function statusHandler(req, res) {
   try {
     const [rows] = await db.query('SELECT COUNT(*) as total, MAX(last_refreshed_at) as last_refreshed_at FROM countries');
@@ -179,14 +177,8 @@ export async function statusHandler(req, res) {
   }
 }
 
+// GET /countries/image
 export async function imageHandler(req, res) {
-  try {
-    const cacheDir = process.env.CACHE_DIR || 'cache';
-    const filePath = path.join(cacheDir, 'summary.png');
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Summary image not found' });
-    return res.sendFile(path.resolve(filePath));
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
+  // Image generation disabled for Option B
+  return res.status(404).json({ error: 'Summary image generation disabled' });
 }

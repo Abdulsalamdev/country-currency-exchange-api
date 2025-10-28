@@ -1,15 +1,19 @@
 import express from 'express';
 import dotenv from 'dotenv';
-import db from './db.js';
-import countriesRouter from './routes/countries.js';
 import fs from 'fs';
+import path from 'path';
+import countryRoutes from './routes/countryRoutes.js';
+import db from './config/database.js';
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-app.use('/countries', countriesRouter);
+const cacheDir = process.env.CACHE_DIR || 'cache';
+if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
+
+app.use('/countries', countryRoutes);
 
 app.get('/status', async (req, res) => {
   try {
@@ -24,20 +28,19 @@ app.get('/status', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-const cacheDir = process.env.CACHE_DIR || 'cache';
-if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true });
 
 async function start() {
   try {
-    // Create table if not exists (simple migration)
-    const migrationSql = fs.readFileSync('migrations/001-create-countries.sql', 'utf8');
+    const migrationSql = fs.readFileSync(path.join('migrations','001-create-countries.sql'),'utf8');
     await db.query(migrationSql);
+    console.log('✅ Migration executed (table ensured)');
 
-    await db.getConnection(); // verify connection
-    console.log('✅ MySQL connected');
+    const conn = await db.getConnection();
+    conn.release();
+    console.log('✅ MySQL connection OK');
 
     app.listen(PORT, () => {
-      console.log(`🚀 Server listening on port ${PORT}`);
+      console.log('🚀 Server listening on port', PORT);
     });
   } catch (err) {
     console.error('Failed to start', err);
