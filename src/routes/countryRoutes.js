@@ -1,19 +1,20 @@
-import express from 'express';
+import express from "express";
 import {
-  refreshHandler,
-  listHandler,
-  getOneHandler,
-  deleteHandler,
-  statusHandler,
-  imageHandler
-} from '../controllers/countryController.js';
+  refresh,
+  getAll,
+  getOne,
+  remove,
+  status,
+  image
+} from "../controllers/countryController.js";
 
 const router = express.Router();
 
-router.post('/refresh', refreshHandler);
-router.get('/', listHandler);
-router.get('/:name', getOneHandler);
-router.delete('/:name', deleteHandler);
-router.get('/image', imageHandler);
+router.post("/countries/refresh", refresh);
+router.get("/countries", getAll);
+router.get("/countries/:name", getOne);
+router.delete("/countries/:name", remove);
+router.get("/status", status);
+router.get("/countries/image", image);
 
 export default router;

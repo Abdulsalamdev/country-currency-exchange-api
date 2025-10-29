@@ -1,184 +1,62 @@
-import axios from 'axios';
-import db from '../config/database.js';
-import fs from 'fs';
-import path from 'path';
+import { refreshCountries } from "../services/countryService.js";
+import { db } from "../utils/db.js";
+import fs from "fs";
 
-const COUNTRIES_API = 'https://restcountries.com/v2/all?fields=name,capital,region,population,flag,currencies';
-const EXCHANGE_API = 'https://open.er-api.com/v6/latest/USD';
-const HTTP_TIMEOUT = parseInt(process.env.HTTP_TIMEOUT || '15000', 10);
-const axiosInstance = axios.create({ timeout: HTTP_TIMEOUT });
-
-function validationError(details) {
-  return { status: 400, body: { error: 'Validation failed', details } };
-}
-
-// POST /countries/refresh
-export async function refreshHandler(req, res) {
-  let countriesData, exchangeData;
+export const refresh = async (req, res) => {
   try {
-    const [cResp, eResp] = await Promise.all([
-      axiosInstance.get(COUNTRIES_API),
-      axiosInstance.get(EXCHANGE_API)
-    ]);
-    countriesData = cResp.data;
-    exchangeData = eResp.data;
-    if (!exchangeData || !exchangeData.rates) throw new Error('Bad exchange data');
+    const result = await refreshCountries();
+    res.json(result);
   } catch (err) {
-    console.error('External API error', err.message || err);
-    return res.status(503).json({ error: 'External data source unavailable', details: 'Could not fetch data from external APIs' });
+    res.status(err.status || 500).json({ error: err.message });
+  }
+};
+
+export const getAll = async (req, res) => {
+  const { region, currency, sort } = req.query;
+  let query = "SELECT * FROM countries";
+  const conditions = [];
+  const params = [];
+
+  if (region) {
+    conditions.push("region = ?");
+    params.push(region);
+  }
+  if (currency) {
+    conditions.push("currency_code = ?");
+    params.push(currency);
   }
 
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
+  if (conditions.length) query += " WHERE " + conditions.join(" AND ");
+  if (sort === "gdp_desc") query += " ORDER BY estimated_gdp DESC";
 
-    const rates = exchangeData.rates || {};
-    const now = new Date();
+  const [rows] = await db.query(query, params);
+  res.json(rows);
+};
 
-    for (const c of countriesData) {
-      const name = c.name?.trim();
-      const population = Number(c.population || 0);
-      const capital = c.capital || null;
-      const region = c.region || null;
-      const flag_url = c.flag || null;
+export const getOne = async (req, res) => {
+  const [rows] = await db.query("SELECT * FROM countries WHERE name = ?", [req.params.name]);
+  if (rows.length === 0) return res.status(404).json({ error: "Country not found" });
+  res.json(rows[0]);
+};
 
-      let currency_code = null;
-      if (Array.isArray(c.currencies) && c.currencies.length > 0) {
-        currency_code = c.currencies[0].code || c.currencies[0].currency || null;
-      }
+export const remove = async (req, res) => {
+  const [result] = await db.query("DELETE FROM countries WHERE name = ?", [req.params.name]);
+  if (result.affectedRows === 0) return res.status(404).json({ error: "Country not found" });
+  res.json({ message: "Deleted successfully" });
+};
 
-      let exchange_rate = null;
-      let estimated_gdp = null;
+export const status = async (req, res) => {
+  const [[{ count }]] = await db.query("SELECT COUNT(*) as count FROM countries");
+  const [meta] = await db.query("SELECT last_refreshed_at FROM meta");
+  res.json({
+    total_countries: count,
+    last_refreshed_at: meta[0]?.last_refreshed_at || null,
+  });
+};
 
-      if (currency_code) {
-        const rate = rates[currency_code];
-        if (typeof rate === 'number') {
-          exchange_rate = rate;
-          const randMultiplier = Math.floor(Math.random() * 1001) + 1000; // 1000-2000
-          estimated_gdp = (population * randMultiplier) / exchange_rate;
-        } else {
-          exchange_rate = null;
-          estimated_gdp = null;
-        }
-      } else {
-        currency_code = null;
-        exchange_rate = null;
-        estimated_gdp = 0;
-      }
+export const image = async (req, res) => {
+  if (!fs.existsSync("cache/summary.png"))
+    return res.status(404).json({ error: "Summary image not found" });
 
-      if (!name || !population) {
-        continue;
-      }
-
-      const name_lc = name.toLowerCase();
-
-      const sql = `
-        INSERT INTO countries
-        (name, name_lc, capital, region, population, currency_code, exchange_rate, estimated_gdp, flag_url, last_refreshed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          name = VALUES(name),
-          capital = VALUES(capital),
-          region = VALUES(region),
-          population = VALUES(population),
-          currency_code = VALUES(currency_code),
-          exchange_rate = VALUES(exchange_rate),
-          estimated_gdp = VALUES(estimated_gdp),
-          flag_url = VALUES(flag_url),
-          last_refreshed_at = VALUES(last_refreshed_at);
-      `;
-      await conn.query(sql, [name, name_lc, capital, region, population, currency_code, exchange_rate, estimated_gdp, flag_url, now]);
-    }
-
-    await conn.commit();
-
-    // compute summary info
-    const [rows] = await conn.query('SELECT COUNT(*) as total FROM countries');
-    const total = rows[0]?.total || 0;
-    const [top5rows] = await conn.query('SELECT name, estimated_gdp FROM countries ORDER BY estimated_gdp DESC LIMIT 5');
-
-    const summary = {
-      total,
-      top5: top5rows.map(r => ({ name: r.name, estimated_gdp: r.estimated_gdp })),
-      last_refreshed_at: new Date().toISOString()
-    };
-
-    // NO IMAGE: we intentionally skip image generation for Option B
-    return res.json({ ok: true, total_countries: total, last_refreshed_at: summary.last_refreshed_at });
-  } catch (err) {
-    console.error('Refresh failed', err);
-    try { await conn.rollback(); } catch (e) { console.error('Rollback failed', e); }
-    return res.status(500).json({ error: 'Internal server error' });
-  } finally {
-    conn.release();
-  }
-}
-
-// GET /countries
-export async function listHandler(req, res) {
-  try {
-    const { region, currency, sort } = req.query;
-    const where = [];
-    const params = [];
-
-    if (region) { where.push('region = ?'); params.push(region); }
-    if (currency) { where.push('currency_code = ?'); params.push(currency); }
-
-    let sql = 'SELECT id, name, capital, region, population, currency_code, exchange_rate, estimated_gdp, flag_url, last_refreshed_at FROM countries';
-    if (where.length) sql += ' WHERE ' + where.join(' AND ');
-    if (sort === 'gdp_desc') sql += ' ORDER BY estimated_gdp DESC';
-
-    const [rows] = await db.query(sql, params);
-    return res.json(rows);
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-}
-
-// GET /countries/:name
-export async function getOneHandler(req, res) {
-  try {
-    const name = req.params.name;
-    const name_lc = name.toLowerCase();
-    const [rows] = await db.query('SELECT id, name, capital, region, population, currency_code, exchange_rate, estimated_gdp, flag_url, last_refreshed_at FROM countries WHERE name_lc = ? LIMIT 1', [name_lc]);
-    if (!rows.length) return res.status(404).json({ error: 'Country not found' });
-    return res.json(rows[0]);
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-}
-
-// DELETE /countries/:name
-export async function deleteHandler(req, res) {
-  try {
-    const name = req.params.name;
-    const name_lc = name.toLowerCase();
-    const [result] = await db.query('DELETE FROM countries WHERE name_lc = ?', [name_lc]);
-    if (result.affectedRows === 0) return res.status(404).json({ error: 'Country not found' });
-    return res.json({ ok: true });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-}
-
-// GET /status
-export async function statusHandler(req, res) {
-  try {
-    const [rows] = await db.query('SELECT COUNT(*) as total, MAX(last_refreshed_at) as last_refreshed_at FROM countries');
-    const total = rows[0]?.total || 0;
-    const last = rows[0]?.last_refreshed_at ? new Date(rows[0].last_refreshed_at).toISOString() : null;
-    return res.json({ total_countries: total, last_refreshed_at: last });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-}
-
-// GET /countries/image
-export async function imageHandler(req, res) {
-  // Image generation disabled for Option B
-  return res.status(404).json({ error: 'Summary image generation disabled' });
-}
+  res.sendFile("summary.png", { root: "cache" });
+};
